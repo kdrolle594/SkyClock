@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Celestial Clock</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="sky">
+        <div id="time-display"></div>
+        <div id="date-display"></div>
+        <div id="location-controls">
+            <div id="location-display">📍 Loading...</div>
+            <div id="location-search-container">
+                <input type="text" id="location-input" placeholder="Enter city name or address" autocomplete="off">
+                <div id="location-suggestions"></div>
+                <button id="search-button">Search Location</button>
+                <button id="use-current-location">Use Current Location</button>
+                <div id="location-error"></div>
+            </div>
+        </div>
+        <div id="sun" class="celestial-body"></div>
+        <div id="moon" class="celestial-body"></div>
+        <div class="cloud cloud1"></div>
+        <div class="cloud cloud2"></div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
