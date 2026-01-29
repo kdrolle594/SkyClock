@@ -72,35 +72,117 @@
         }
         createSnowFlakes();
 
-        // Fetch weather based on user's location
-        async function fetchWeather(lat, lon) {
-            try {
-                // Using Open-Meteo API (free, no API key required)
-                const response = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,is_day,wind_speed_10m&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto`);
-                const data = await response.json();
+        // --- Replace or insert the helper + updated functions below ---
 
-                const weatherCode = data.current.weather_code;
-                currentWeather.temperature = Math.round(data.current.temperature_2m);
-                currentWeather.windSpeed = Math.round(data.current.wind_speed_10m);
-                currentWeather.isWindy = currentWeather.windSpeed > 15; // Windy if > 15 mph
-                
-                // Update timezone from API response
-                currentLocation.timezone = data.timezone;
-                
-                // Map weather codes to conditions
-                currentWeather.condition = mapWeatherCode(weatherCode);
-                
-                console.log('Weather fetched:', currentWeather);
-                
-                // Update wind effects
-                updateWindEffects();
-            } catch (error) {
-                console.log('Could not fetch weather, using default clear sky:', error);
-                currentWeather.condition = 'clear';
-                currentWeather.windSpeed = 0;
-                currentWeather.isWindy = false;
-            }
+// Simple fetch wrapper that enforces timeout and checks response.ok
+async function fetchJson(url, timeout = 10000) {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
+    try {
+        const resp = await fetch(url, { signal: controller.signal });
+        clearTimeout(id);
+        if (!resp.ok) {
+            const text = await resp.text().catch(() => '');
+            throw new Error(`HTTP ${resp.status} ${resp.statusText} - ${text}`);
         }
+        return await resp.json();
+    } catch (err) {
+        clearTimeout(id);
+        throw err;
+    }
+}
+
+async function fetchWeather(lat, lon) {
+    try {
+        // Correct forecast URL: use current_weather=true and proper unit names
+        const forecastUrl = `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&current_weather=true&temperature_unit=fahrenheit&windspeed_unit=mph&timezone=auto`;
+
+        const data = await fetchJson(forecastUrl, 10000);
+
+        if (!data.current_weather) {
+            throw new Error('No current_weather returned from Open-Meteo');
+        }
+
+        const cw = data.current_weather;
+        // Open-Meteo current_weather fields: temperature, windspeed, weathercode, is_day
+        currentWeather.temperature = Math.round(cw.temperature);
+        currentWeather.windSpeed = Math.round(cw.windspeed);
+        currentWeather.isWindy = currentWeather.windSpeed > 15; // Windy if > 15 mph
+
+        // Update timezone from API response (fallback to existing if missing)
+        currentLocation.timezone = data.timezone || currentLocation.timezone;
+
+        // Map weather codes to conditions
+        currentWeather.condition = mapWeatherCode(cw.weathercode);
+
+        console.log('Weather fetched:', { currentWeather, timezone: currentLocation.timezone });
+
+        // Update wind effects
+        updateWindEffects();
+    } catch (error) {
+        console.error('Could not fetch weather, using default clear sky:', error);
+        currentWeather.condition = 'clear';
+        currentWeather.temperature = currentWeather.temperature || 20;
+        currentWeather.windSpeed = 0;
+        currentWeather.isWindy = false;
+    }
+}
+
+// Select a location from search results (improved validation)
+async function selectLocation(result) {
+    // Validate that the location has all required data
+    if (result.latitude == null || result.longitude == null || !result.name || !result.country) {
+        showLocationError('Invalid location data. Please try another location.');
+        return;
+    }
+
+    currentLocation.lat = result.latitude;
+    currentLocation.lon = result.longitude;
+    currentLocation.name = `${result.name}${result.admin1 ? ', ' + result.admin1 : ''}${result.country ? ', ' + result.country : ''}`;
+
+    // Update input field
+    locationInput.value = currentLocation.name;
+
+    try {
+        // Fetch weather for this location
+        await fetchWeather(currentLocation.lat, currentLocation.lon);
+
+        // Verify that timezone was successfully retrieved
+        if (!currentLocation.timezone) {
+            showLocationError('Could not retrieve timezone for this location.');
+            return;
+        }
+
+        // Update display
+        locationDisplay.textContent = `📍 ${currentLocation.name}`;
+        hideLocationError();
+        toggleLocationSearch();
+    } catch (error) {
+        showLocationError('Could not retrieve weather data for this location.');
+        console.error('Weather fetch error:', error);
+    }
+}
+
+// Reverse geocode coordinates to location name (use /v1/reverse)
+async function reverseGeocode(lat, lon) {
+    try {
+        const url = `https://geocoding-api.open-meteo.com/v1/reverse?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&count=1&language=en&format=json`;
+        const data = await fetchJson(url, 10000);
+
+        if (data.results && data.results.length > 0) {
+            const result = data.results[0];
+            currentLocation.name = `${result.name}${result.admin1 ? ', ' + result.admin1 : ''}${result.country ? ', ' + result.country : ''}`;
+        } else {
+            currentLocation.name = `${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+        }
+
+        locationDisplay.textContent = `📍 ${currentLocation.name}`;
+    } catch (error) {
+        currentLocation.name = 'Unknown Location';
+        locationDisplay.textContent = `📍 ${currentLocation.name}`;
+        console.error('Reverse geocode error:', error);
+    }
+}
 
         // Get location from browser geolocation
         async function getCurrentLocation() {
@@ -271,62 +353,7 @@
             locationSuggestions.classList.remove('active');
             locationSuggestions.innerHTML = '';
         }
-
-        // Select a location from search results
-        async function selectLocation(result) {
-            // Validate that the location has all required data
-            if (!result.latitude || !result.longitude || !result.name || !result.country) {
-                showLocationError('Invalid location data. Please try another location.');
-                return;
-            }
-
-            currentLocation.lat = result.latitude;
-            currentLocation.lon = result.longitude;
-            currentLocation.name = `${result.name}${result.admin1 ? ', ' + result.admin1 : ''}${result.country ? ', ' + result.country : ''}`;
-            
-            // Update input field
-            locationInput.value = currentLocation.name;
-            
-            try {
-                // Fetch weather for this location
-                await fetchWeather(currentLocation.lat, currentLocation.lon);
-                
-                // Verify that timezone was successfully retrieved
-                if (!currentLocation.timezone) {
-                    showLocationError('Could not retrieve timezone for this location.');
-                    return;
-                }
-                
-                // Update display
-                locationDisplay.textContent = `📍 ${currentLocation.name}`;
-                hideLocationError();
-                toggleLocationSearch();
-            } catch (error) {
-                showLocationError('Could not retrieve weather data for this location.');
-                console.error('Weather fetch error:', error);
-            }
-        }
-
-        // Reverse geocode coordinates to location name
-        async function reverseGeocode(lat, lon) {
-            try {
-                const response = await fetch(`https://geocoding-api.open-meteo.com/v1/search?latitude=${lat}&longitude=${lon}&count=1&language=en&format=json`);
-                const data = await response.json();
-
-                if (data.results && data.results.length > 0) {
-                    const result = data.results[0];
-                    currentLocation.name = `${result.name}${result.admin1 ? ', ' + result.admin1 : ''}`;
-                } else {
-                    currentLocation.name = `${lat.toFixed(2)}, ${lon.toFixed(2)}`;
-                }
-                
-                locationDisplay.textContent = `📍 ${currentLocation.name}`;
-            } catch (error) {
-                currentLocation.name = 'Unknown Location';
-                locationDisplay.textContent = `📍 ${currentLocation.name}`;
-                console.error('Reverse geocode error:', error);
-            }
-        }
+        
 
         // UI functions
         function toggleLocationSearch() {
